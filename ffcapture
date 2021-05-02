@@ -2,11 +2,10 @@
 
 # Requirements
 # slop - for selecting area or window with mouse
-# xrandr - for getting the display resolution
-# ffmpeg(built with libx264 library and alsa library) - for capturing screen and audio
+# ffmpeg(built with libx264 library and alsa/pulse library) - for capturing screen and audio
 
-if ! which {slop,ffmpeg,xrandr} >/dev/null 2>&1; then
-	printf "Please make sure to install slop,xrandr,ffmpeg before using this script.\n"
+if ! which {slop,ffmpeg} >/dev/null 2>&1; then
+	printf "Please make sure to install slop,ffmpeg before using this script.\n"
 fi
 
 CAPTURE_DELAY=0 # initially no delay
