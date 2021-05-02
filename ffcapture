@@ -1,0 +1,205 @@
+#!/bin/bash
+
+# Requirements
+# slop - for selecting area or window with mouse
+# xrandr - for getting the display resolution
+# ffmpeg(built with libx264 library and alsa library) - for capturing screen and audio
+
+if ! which {slop,ffmpeg,xrandr} >/dev/null 2>&1; then
+	printf "Please make sure to install slop,xrandr,ffmpeg before using this script.\n"
+fi
+
+CAPTURE_DELAY=0 # initially no delay
+FF_DEFAULT_PARMS="-loglevel fatal -threads 0" # ffmpeg default parameters
+OVERWRITE_OUTPUT="-n" # disable ffmpeg overwriting existing files
+CAPTURE_TYPE=0 # 0-screenshot,1-screenrecord
+CAPTURE_AUDIO=0 # record audio also
+CAPTURE_INPUT_TARGET="$DISPLAY" # default monitor
+CAPTURE_INPUT_PARAMS="-f x11grab"
+CAPTURE_INPUT_AREA=
+CAPTURE_OUTPUT_VCODEC=
+CAPTURE_OUTPUT_EXTRAS=
+CAPTURE_OUTPUT_FRAMERATE=
+CAPTURE_OUTPUT_TIMER=
+CAPTURE_OUTPUT_TARGET=
+CAPTURE_OUTPUT_PARAMS=
+
+handle_user_arguments() {
+	while [ -n "$1" ]; do
+		case "$1" in
+			--help|-h) # prints help menu
+				show_usage
+				exit 0
+				;;
+			--delay|-d) # define a delay time before taking screenshot or starting the recording
+				shift
+				CAPTURE_DELAY="$1"
+				;;
+			--select|-s) # asks the user to select a window or an area using the mouse pointer
+				get_selection
+				;;
+			--force|-f) # overwrite files without asking for permission
+				OVERWRITE_OUTPUT="-y"
+				;;
+			--output|-o) # define output file name
+				shift
+				CAPTURE_OUTPUT_TARGET="$1"
+				;;
+			--gif|-g)
+				CAPTURE_TYPE=2
+				;;
+			--video|-v) # enable recording instead of taking screenshot
+				CAPTURE_TYPE=1
+				;;
+			--audio|-a) # enable audio recording while recording the screen
+				CAPTURE_AUDIO=1
+				;;
+			--codec|-c) # define the video codec to be used by ffmpeg
+				shift
+				CAPTURE_OUTPUT_VCODEC="$1"
+				;;
+			--framerate|-r) # define the framerate of the recording
+				shift
+				CAPTURE_OUTPUT_FRAMERATE="$1"
+				;;
+			--extra|-e) # extra parameters for ffmpeg regarding codec,quality etc
+				shift
+				CAPTURE_OUTPUT_EXTRAS="$1"
+				;;
+			--timer|-t) # define the time period for how long the recording will continue
+				shift
+				CAPTURE_OUTPUT_TIMER="$1"
+				;;
+			*)
+				printf "Invalid argument. Try --help for more info\n"
+				exit 2
+				;;
+		esac
+		shift
+	done
+}
+
+show_usage() {
+	echo -en "USAGE:\tffcapture -o ~/Pictures/screenshot.png\n"
+	echo -en "--help,-h\t\tprint this menu.\n"
+	echo -en "--delay,-d\t\tprovide a delay time(in seconds) before taking screenshot or starting screenrecord.\n"
+	echo -en "--select,-s\t\tinteractively select a region or window on the screen.\n"
+	echo -en "--force,-f\t\toverwrite files without asking for permission.\n"
+	echo -en "--video,-v\t\trecord the screen instead of taking screesnshot.\n"
+	echo -en "--gif,-g\t\trecord as gif instead of videos.\n"
+	echo -en "--audio,-a\t\trecord audio along with the screen.\n"
+	echo -en "--output,-o\t\tdefine output file name.\n"
+	echo -en "--codec,-c\t\tdefine the video codec to be used by ffmpeg.\n"
+	echo -en "--framerate,-f\t\tdefine the framerate of the recording.\n"
+	echo -en "--extra,-e\t\tdefine extra parameters for ffmpeg regarding codec,quality etc.\n"
+	echo -en "--timer,-t\t\tdefine the time period for how long the recording will continue. [-t 01:00:00](for recording next 1 hr) \n"
+}
+
+get_selection() {
+	selection_parameters=$(slop -o -c 1,0,0,1 2>/dev/null)
+	[ -z "$selection_parameters" ] && printf "No area or window selected. Existing..." && exit 1
+	read -r selection_a selection_x selection_y <<< "$(echo "$selection_parameters" | awk -F '+' '{print $1 " " $2 " " $3}')"
+	CAPTURE_INPUT_AREA="-s $selection_a -grab_x $selection_x -grab_y $selection_y"
+}
+
+
+main() {
+	handle_user_arguments "$@"
+
+	### Stop if video specific arguments are without the video parameter
+	if [ "$CAPTURE_TYPE" -eq 0 ]; then
+		[ -n "$CAPTURE_OUTPUT_FRAMERATE" ] && printf "Invalid argument: framerate(-r) is available for recording only. Add '-v' before.\n" && exit 1
+		[ -n "$CAPTURE_OUTPUT_VCODEC" ] && printf "Invalid argument: codec(-c) is available for recording only. Add '-v' before.\n" && exit 1
+		[ -n "$CAPTURE_OUTPUT_EXTRAS" ] && printf "Invalid argument: it is available for recording only. Add '-v' before.\n" && exit 1
+		[ -n "$CAPTURE_OUTPUT_TIMER" ] && printf "Invalid argument: timer(-t) is available for recording only. Add '-v' before.\n" && exit 1
+		[ "$CAPTURE_AUDIO" -eq 1 ] && printf "Invalid argument: audio(-a) is available for recording only. Add '-v' before.\n" && exit 1
+	fi
+
+	### Define input parameters for audio
+	if [ "$CAPTURE_AUDIO" -eq 1 ]; then
+		CAPTURE_INPUT_PARAMS="-f pulse -ac 2 -i default $CAPTURE_INPUT_PARAMS" # for PulseAudio users
+		#CAPTURE_INPUT_PARAMS="-f alsa -ac 2 -i hw:0 $CAPTURE_INPUT_PARAMS"    # for ALSA users
+	fi
+
+	### Define input parameters before defining the input target
+	# Define input area for screenshot/recording
+	CAPTURE_INPUT_PARAMS="$CAPTURE_INPUT_PARAMS $CAPTURE_INPUT_AREA"
+
+	### Finally define input target screen/monitor for screenshot/recording
+	CAPTURE_INPUT_TARGET="-i $CAPTURE_INPUT_TARGET"
+
+	### Define default values for various output parameters
+	# Define default frame rate for screen recording
+	if [ -z "$CAPTURE_OUTPUT_FRAMERATE" ]; then
+		[ $CAPTURE_TYPE -eq 1 ] && CAPTURE_OUTPUT_FRAMERATE="30" # default framerate for screen recording
+		[ $CAPTURE_TYPE -eq 2 ] && CAPTURE_OUTPUT_FRAMERATE="5"  # default framerate for recording gif
+	fi
+	# Define default video codec for recording
+	if [ -z "$CAPTURE_OUTPUT_VCODEC" ]; then
+		[ $CAPTURE_TYPE -eq 1 ] && CAPTURE_OUTPUT_VCODEC="libx264"
+		[ $CAPTURE_TYPE -eq 2 ] && CAPTURE_OUTPUT_VCODEC="gif"
+	fi
+	# Define extra parameters if using default codec
+	if [ -z "$CAPTURE_OUTPUT_EXTRAS" ]; then
+		[ $CAPTURE_TYPE -eq 1 ] && [ "$CAPTURE_OUTPUT_VCODEC" = "libx264" ] && CAPTURE_OUTPUT_EXTRAS="-crf 23 -preset ultrafast"
+		[ $CAPTURE_TYPE -eq 2 ] && [ "$CAPTURE_OUTPUT_VCODEC" = "gif" ] && CAPTURE_OUTPUT_EXTRAS="-vf scale=320:-1:flags=lanczos -loop 0" # reduces the resolution effectively
+	fi
+
+	### Define output parameters before defining the output target
+	if [ "$CAPTURE_TYPE" -eq 0 ]; then
+		# for screenshot
+		CAPTURE_OUTPUT_PARAMS="-vframes 1"
+	else
+		# for screen recording or gif
+		CAPTURE_OUTPUT_PARAMS="-r $CAPTURE_OUTPUT_FRAMERATE -vcodec $CAPTURE_OUTPUT_VCODEC $CAPTURE_OUTPUT_EXTRAS"
+	fi
+
+	# If a time is provided by user append it to the parameters
+	if [ -n "$CAPTURE_OUTPUT_TIMER" ] && [ $CAPTURE_TYPE -ne 0 ]; then
+		CAPTURE_OUTPUT_PARAMS="$CAPTURE_OUTPUT_PARAMS -t $CAPTURE_OUTPUT_TIMER"
+	fi
+
+	### Finally define output file name if not defined by user
+	if [ -z "$CAPTURE_OUTPUT_TARGET" ]; then
+		if [ "$CAPTURE_TYPE" -eq 0 ]; then
+			CAPTURE_OUTPUT_TARGET="screenshot-$(date +'%Y-%m-%d-%H-%M-%S').png"
+		elif [ "$CAPTURE_TYPE" -eq 1 ]; then
+			CAPTURE_OUTPUT_TARGET="screenrecord-$(date +'%Y-%m-%d-%H-%M-%S').mp4"
+		elif [ "$CAPTURE_TYPE" -eq 2 ]; then
+			CAPTURE_OUTPUT_TARGET="screenrecord-$(date +'%Y-%m-%d-%H-%M-%S').gif"
+		fi
+	fi
+
+	### Check if output file already exists and ask to overwrite if it exists
+	if [ -f "$CAPTURE_OUTPUT_TARGET" ] && [ "$OVERWRITE_OUTPUT" != "-y" ]; then
+		printf "A file with the same name already exists! Do you want to overwrite? [y/N] "
+		read -r if_overwrite
+		case "$if_overwrite" in
+			YES|Yes|yes|Y|y)
+				OVERWRITE_OUTPUT="-y"
+				;;
+			*)
+				printf "File will not be overwritten. Stopping...\n" && exit 1
+				;;
+		esac
+	fi
+	# Update the default parameters to include overwrite option
+	FF_DEFAULT_PARMS="$FF_DEFAULT_PARMS $OVERWRITE_OUTPUT"
+
+	# delay before taking screenshot or recording video
+	if [ "$CAPTURE_DELAY" -gt 0 ]; then
+		printf 'Starting after %s secs...\n' "$CAPTURE_DELAY"
+		sleep "$CAPTURE_DELAY"
+	fi
+
+	[ "$CAPTURE_TYPE" -ne 0 ] && printf "To stop recording press 'Ctrl+C'\n"
+
+	# Finally run ffmpeg with proper parameters
+	ffmpeg $FF_DEFAULT_PARMS \
+		$CAPTURE_INPUT_PARAMS $CAPTURE_INPUT_TARGET \
+		$CAPTURE_OUTPUT_PARAMS $CAPTURE_OUTPUT_TARGET
+	}
+
+main "$@"
+
+exit 0
