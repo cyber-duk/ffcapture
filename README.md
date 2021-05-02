@@ -15,7 +15,6 @@
 
 - ffmpeg
 - slop
-- xrandr
 
 ## Usage
 
@@ -23,7 +22,7 @@
 `ffcapture -a -v -o screenrecord.mkv`
 - To take a screenshot after 5 seconds
 `ffcapture -d 5 -o screenshot.png`
-- For more information, run `ffcapture --help`.
+- For more information, run `ffcapture --help`
 
 ## License
 Copyright (c) 2021 soura99
