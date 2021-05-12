@@ -9,7 +9,7 @@
 - Define framerate, video codec and other parameters directly.
 
 ## Limitation
-- Does not work for multi-monitor capturing.
+- No multi-monitor support. (I don't own multi-monitor system. Consider modifying yourself.)
 
 ## Requirements
 
