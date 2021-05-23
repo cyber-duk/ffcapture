@@ -6,6 +6,7 @@
 
 if ! which {slop,ffmpeg} >/dev/null 2>&1; then
 	printf "Please make sure to install slop,ffmpeg before using this script.\n"
+	exit 1
 fi
 
 CAPTURE_DELAY=0 # initially no delay
